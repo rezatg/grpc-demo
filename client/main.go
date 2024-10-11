@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	pb "example/proto"
+	"io"
 	"log"
 	"time"
 
@@ -23,11 +24,15 @@ func main() {
 
 	client := pb.NewGreetServiceClient(conn)
 
-	// names := &pb.NamesList{
-	// 	Names: []string{"Akhil", "Alice", "Bob"},
-	// }
+	names := &pb.NamesList{
+		Names: []string{"Akhil", "Alice", "Bob"},
+	}
 
-	callSayHello(client)
+	// callSayHello(client)
+	// callSayHelloServerStream(client, names)
+	// callSayHelloClientStream(client, names)
+
+	callSayHelloBidirectionalStream(client, names)
 }
 
 func callSayHello(client pb.GreetServiceClient) {
@@ -39,4 +44,92 @@ func callSayHello(client pb.GreetServiceClient) {
 		log.Fatalf("Could not greet: %v", err)
 	}
 	log.Printf("%s", res.Message)
+}
+
+// server_stream
+func callSayHelloServerStream(client pb.GreetServiceClient, names *pb.NamesList) {
+	log.Printf("Streaming started")
+	stream, err := client.SayHelloServerStreaming(context.Background(), names)
+	if err != nil {
+		log.Fatalf("Could not send names: %v", err)
+	}
+
+	for {
+		message, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Fatalf("Error while streaming %v", err)
+		}
+		log.Println(message)
+	}
+
+	log.Printf("Streaming finished")
+}
+
+// client_stream
+func callSayHelloClientStream(client pb.GreetServiceClient, names *pb.NamesList) {
+	log.Printf("Client Streaming started")
+	stream, err := client.SayHelloClientStreaming(context.Background())
+	if err != nil {
+		log.Fatalf("Could not send names: %v", err)
+	}
+
+	for _, name := range names.Names {
+		req := &pb.HelloRequest{
+			Name: name,
+		}
+		if err := stream.Send(req); err != nil {
+			log.Fatalf("Error while sending %v", err)
+		}
+		log.Printf("Sent request with name: %s", name)
+		time.Sleep(2 * time.Second)
+	}
+
+	res, err := stream.CloseAndRecv()
+	log.Printf("Client Streaming finished")
+	if err != nil {
+		log.Fatalf("Error while receiving %v", err)
+	}
+	log.Printf("%v", res.Messages)
+}
+
+// bi_stream
+func callSayHelloBidirectionalStream(client pb.GreetServiceClient, names *pb.NamesList) {
+	log.Printf("Bidirectional Streaming started")
+	stream, err := client.SayHelloBidirectonalStreaming(context.Background())
+	if err != nil {
+		log.Fatalf("Could not send names: %v", err)
+	}
+
+	waitc := make(chan struct{})
+
+	go func() {
+		for {
+			message, err := stream.Recv()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				log.Fatalf("Error while streaming %v", err)
+			}
+			log.Println(message)
+		}
+		close(waitc)
+	}()
+
+	for _, name := range names.Names {
+		req := &pb.HelloRequest{
+			Name: name,
+		}
+		if err := stream.Send(req); err != nil {
+			log.Fatalf("Error while sending %v", err)
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	stream.CloseSend()
+	<-waitc
+	log.Printf("Bidirectional Streaming finished")
 }
